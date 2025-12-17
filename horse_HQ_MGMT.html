@@ -3,25 +3,44 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>總公司管理後台 - 最終修正版</title>
+  <title>總部管理與業績即時看板</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-slate-100 p-6">
+<body class="bg-slate-100 p-4 md:p-8">
   <div class="max-w-7xl mx-auto">
-    <h1 class="text-3xl font-extrabold mb-4 text-slate-800">總公司管理後台 (Management)</h1>
-    <div id="statusMessage" class="hidden mb-4 p-3 rounded-lg font-bold"></div>
-    
-    <div class="bg-white p-6 rounded-xl shadow-lg mb-8 flex justify-between items-center border-t-4 border-blue-600">
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
       <div>
-        <div id="userInfo" class="text-xl font-bold text-slate-700">正在同步雲端資料...</div>
-        <p class="text-sm text-slate-500 mt-1">提示：開啟管理權限後，即可對「鎖定中」或「已售出」的號碼進行撤銷。</p>
+        <h1 class="text-3xl font-black text-slate-800 tracking-tight">馬年壺全台戰情室</h1>
+        <p id="userInfo" class="text-slate-500 font-bold">身份：<span class="text-blue-600">觀察者模式</span></p>
       </div>
-      <button id="toggleRole" class="bg-blue-600 hover:bg-blue-700 text-white py-3 px-8 rounded-xl font-black shadow-lg transform transition active:scale-95">
+      <button id="toggleRole" class="bg-blue-600 hover:bg-blue-700 text-white py-3 px-8 rounded-xl font-black shadow-lg transition-all active:scale-95">
         🔓 開啟管理權限
       </button>
     </div>
 
-    <div id="numberList" class="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 xl:grid-cols-12 gap-4"></div>
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      <div class="bg-indigo-600 text-white p-6 rounded-2xl shadow-xl">
+        <div class="text-xs opacity-70 mb-1 font-bold uppercase tracking-wider">全台總銷量</div>
+        <div id="totalSold" class="text-4xl font-black italic">0</div>
+      </div>
+      <div class="bg-emerald-500 text-white p-6 rounded-2xl shadow-xl">
+        <div class="text-xs opacity-70 mb-1 font-bold uppercase tracking-wider">剩餘可選</div>
+        <div id="totalRemaining" class="text-4xl font-black italic">168</div>
+      </div>
+      <div class="bg-white p-6 rounded-2xl shadow-xl border-2 border-slate-200 col-span-2">
+        <div class="text-sm text-slate-400 mb-3 font-bold uppercase tracking-wider flex justify-between">
+          <span>分店實時業績排行</span>
+          <span class="text-indigo-600">LIVE</span>
+        </div>
+        <div id="branchRanking" class="grid grid-cols-2 gap-x-6 gap-y-2 text-sm font-bold text-slate-700">
+          載入中...
+        </div>
+      </div>
+    </div>
+
+    <hr class="border-slate-300 mb-8">
+
+    <div id="numberList" class="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 xl:grid-cols-12 gap-3"></div>
   </div>
 
   <script type="module">
@@ -34,85 +53,4 @@
       authDomain: "horse-pot-lock.firebaseapp.com",
       projectId: "horse-pot-lock",
       messagingSenderId: "211854672738",
-      appId: "1:211854672738:web:581c17af995d31d4ebe23b"
-    };
-
-    const app = initializeApp(firebaseConfig);
-    const db = getFirestore(app);
-    const auth = getAuth(app);
-
-    let isAdminMode = false; 
-    let numberData = {};
-    const COLLECTION_NAME = "limited_numbers";
-
-    window.forceReset = async (num) => {
-      if(!confirm(`確定要將編號 ${num} 強制恢復為可選狀態嗎？`)) return;
-      try {
-        await runTransaction(db, async (tx) => {
-          tx.update(doc(db, COLLECTION_NAME, String(num)), { status: "available", lockedBy: null, salesName: null, timestamp: null });
-        });
-        showMsg(`編號 ${num} 已成功重置`);
-      } catch (e) { showMsg("失敗:" + e.message, true); }
-    };
-
-    const showMsg = (m, isErr = false) => {
-      const el = document.getElementById("statusMessage");
-      el.className = isErr ? "p-3 bg-red-500 text-white rounded-lg block" : "p-3 bg-green-600 text-white rounded-lg block";
-      el.textContent = m;
-      setTimeout(() => el.className = "hidden", 2000);
-    };
-
-    const render = () => {
-      const listEl = document.getElementById("numberList");
-      listEl.innerHTML = "";
-      Object.values(numberData).sort((a, b) => a.number - b.number).forEach(item => {
-        let bg = "bg-white", txt = "可選", btn = "";
-        
-        if (item.status === "available") {
-          bg = "bg-green-50"; txt = "可選";
-          btn = `<button class="w-full py-1 text-[10px] text-slate-300 border border-slate-200 rounded cursor-not-allowed" disabled>無需操作</button>`;
-        } else if (item.status === "locked") {
-          bg = "bg-yellow-100 border-yellow-400"; txt = `鎖定(${item.salesName || "用戶"})`;
-          btn = isAdminMode ? `<button onclick="forceReset('${item.number}')" class="w-full bg-orange-500 text-white py-1 rounded text-xs font-bold shadow">強制解除</button>` : `<button class="w-full bg-slate-200 text-slate-400 py-1 rounded text-xs" disabled>唯讀模式</button>`;
-        } else if (item.status === "sold") {
-          bg = "bg-red-100 border-red-400"; txt = `售出(${item.salesName})`;
-          btn = isAdminMode ? `<button onclick="forceReset('${item.number}')" class="w-full bg-red-700 text-white py-1 rounded text-xs font-bold shadow">撤銷成交</button>` : `<button class="w-full bg-slate-200 text-slate-400 py-1 rounded text-xs" disabled>唯讀模式</button>`;
-        }
-
-        const div = document.createElement("div");
-        div.className = `${bg} p-4 rounded-xl border-2 flex flex-col justify-between shadow-sm transition-all`;
-        div.innerHTML = `<div><div class="text-2xl font-black text-slate-800">${item.number}</div><div class="text-[10px] font-bold text-slate-500 mb-2">${txt}</div></div>${btn}`;
-        listEl.appendChild(div);
-      });
-    };
-
-    document.getElementById("toggleRole").addEventListener("click", () => {
-      isAdminMode = !isAdminMode;
-      const btn = document.getElementById("toggleRole");
-      const info = document.getElementById("userInfo");
-      if (isAdminMode) {
-        btn.textContent = "🔒 關閉管理權限";
-        btn.className = "bg-red-600 hover:bg-red-700 text-white py-3 px-8 rounded-xl font-black shadow-lg";
-        info.innerHTML = "身份：<span class='text-red-600'>總部最高管理員 (操作中)</span>";
-      } else {
-        btn.textContent = "🔓 開啟管理權限";
-        btn.className = "bg-blue-600 hover:bg-blue-700 text-white py-3 px-8 rounded-xl font-black shadow-lg";
-        info.innerHTML = "身份：<span class='text-blue-600'>觀察者模式 (僅供閱讀)</span>";
-      }
-      render(); 
-    });
-
-    signInAnonymously(auth).then(() => {
-      onAuthStateChanged(auth, user => {
-        if (user) {
-          onSnapshot(collection(db, COLLECTION_NAME), snap => {
-            snap.forEach(d => numberData[d.id] = d.data());
-            render();
-          });
-        }
-      });
-    });
-
-  </script>
-</body>
-</html>
+      appId: "1:211854672738:web:5
