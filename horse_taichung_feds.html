@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>馬年壺即時鎖定系統 - 分店版</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 p-6 md:p-10">
+  <div class="max-w-7xl mx-auto">
+    <h1 class="text-3xl font-extrabold text-gray-900 mb-2">馬年壺限量編號即時鎖定系統</h1>
+    <div id="statusMessage" class="hidden mb-4 transition-all duration-300"></div>
+    <div class="bg-white p-4 rounded-lg shadow mb-6 flex justify-between items-center">
+      <div id="userInfo" class="text-sm text-gray-700 font-bold">正在認證...</div>
+      </div>
+    <div class="flex space-x-4 mb-6 text-sm font-medium">
+      <div class="flex items-center"><span class="w-4 h-4 rounded-full bg-green-500 mr-2"></span> 可選</div>
+      <div class="flex items-center"><span class="w-4 h-4 rounded-full bg-yellow-500 mr-2"></span> 鎖定中</div>
+      <div class="flex items-center"><span class="w-4 h-4 rounded-full bg-red-500 mr-2"></span> 已售出</div>
+    </div>
+    <div id="numberList" class="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 xl:grid-cols-12 gap-4">
+      <p class="text-gray-500 col-span-full">載入中...</p>
+    </div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js";
+    import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
+    import { getFirestore, collection, doc, writeBatch, onSnapshot, runTransaction } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCTHXe0izz5FYcKZf3m_WBV2nBnbREgOjA",
+      authDomain: "horse-pot-lock.firebaseapp.com",
+      projectId: "horse-pot-lock",
+      messagingSenderId: "211854672738",
+      appId: "1:211854672738:web:581c17af995d31d4ebe23b"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    // ⭐️【請針對不同分店修改此處】⭐️
+    // 1.台北旗艦店 | 2.新光信義A4 | 3.新光站前店 | 4.鶯歌光點美學 | 5.環球A19
+    // 6.新竹竹北 | 7.台中豐樂 | 8.台中大遠百 | 9.台南崇善 | 10.高雄美術館 | 11.新光左營
+    let userRole = "台中大遠百"; 
+
+    const numberListEl = document.getElementById("numberList");
+    const statusMessageEl = document.getElementById("statusMessage");
+    const userInfoEl = document.getElementById("userInfo");
+    let userId = "anonymous";
+    let numberData = {};
+    const COLLECTION_NAME = "limited_numbers";
+
+    const displayStatus = (message, isError = false) => {
+      statusMessageEl.className = isError ? "p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg" : "p-3 bg-green-100 border border-green-400 text-green-700 rounded-lg";
+      statusMessageEl.textContent = message; statusMessageEl.style.display = "block";
+      setTimeout(() => (statusMessageEl.style.display = "none"), 2500);
+    };
+
+    const renderNumberGrid = (numbers) => {
+      numberListEl.innerHTML = "";
+      numbers.forEach((item) => {
+        const isLocked = item.status === "locked";
+        const isSold = item.status === "sold";
+        let bgColor = "bg-green-200", statusText = "可選", buttonHtml = `<button data-number="${item.number}" data-action="lock" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 rounded-md text-sm">鎖定</button>`;
+
+        if (isLocked) {
+          bgColor = "bg-yellow-200";
+          statusText = `鎖定中 (${(item.lockedBy || "").substring(0, 4)})`;
+          if (item.lockedBy === userId) {
+            buttonHtml = `<div class="flex space-x-2"><button data-number="${item.number}" data-action="sell" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 rounded-md text-xs">成交</button><button data-number="${item.number}" data-action="unlock" class="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 rounded-md text-xs">解除</button></div>`;
+          } else {
+            buttonHtml = `<button class="w-full bg-gray-400 text-white py-2 rounded-md text-sm" disabled>已被鎖定</button>`;
+          }
+        } else if (isSold) {
+          bgColor = "bg-red-200"; statusText = `已售出 (${item.salesName || ""})`;
+          buttonHtml = `<button class="w-full bg-gray-400 text-white py-2 rounded-md text-sm" disabled>已售罄</button>`;
+        }
+
+        const card = document.createElement("div");
+        card.className = `${bgColor} p-4 rounded-xl shadow-sm flex flex-col justify-between`;
+        card.innerHTML = `<div class="mb-4"><div class="text-2xl font-black text-gray-800">${item.number}</div><div class="text-xs font-bold text-gray-600 uppercase">${statusText}</div></div>${buttonHtml}`;
+        card.querySelectorAll('button:not([disabled])').forEach(btn => btn.onclick = handleButtonClick);
+        numberListEl.appendChild(card);
+      });
+    };
+
+    const handleButtonClick = async (e) => {
+      const btn = e.currentTarget; const num = String(btn.dataset.number); const act = btn.dataset.action;
+      try {
+        await runTransaction(db, async (tx) => {
+          const ref = doc(db, COLLECTION_NAME, num);
+          const snap = await tx.get(ref);
+          if (act === "lock") {
+            if (snap.data().status !== "available") throw new Error("已被搶走！");
+            tx.update(ref, { status: "locked", lockedBy: userId, salesName: userRole, timestamp: Date.now() });
+          } else if (act === "sell") {
+            tx.update(ref, { status: "sold", salesName: userRole, timestamp: Date.now() });
+          } else if (act === "unlock") {
+            tx.update(ref, { status: "available", lockedBy: null, salesName: null, timestamp: null });
+          }
+        });
+        displayStatus("同步成功！");
+      } catch (err) { displayStatus(err.message, true); }
+    };
+
+    signInAnonymously(auth).then(() => {
+      onAuthStateChanged(auth, (user) => {
+        if (user) {
+          userId = user.uid;
+          userInfoEl.innerHTML = `當前分店: <span class="text-indigo-600">${userRole}</span>`;
+          onSnapshot(collection(db, COLLECTION_NAME), (snap) => {
+            snap.forEach(d => numberData[d.id] = d.data());
+            renderNumberGrid(Object.values(numberData).sort((a,b) => a.number - b.number));
+          });
+        }
+      });
+    });
+  </script>
+</body>
+</html>
