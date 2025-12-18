@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>總部官網(手動輸入) - 馬年壺搶號系統</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 p-4 md:p-8">
+  <div class="max-w-6xl mx-auto">
+    <div class="mb-6">
+      <h1 class="text-2xl md:text-3xl font-black text-slate-800">總部官網(手動輸入)</h1>
+      <p class="text-sm text-slate-500 font-bold mt-1">請協助官網訂單或電話訂單進行即時鎖定</p>
+    </div>
+
+    <div class="flex gap-4 mb-6 text-sm font-bold">
+      <div class="flex items-center"><div class="w-4 h-4 bg-green-100 border-2 border-green-500 rounded mr-1"></div>可選</div>
+      <div class="flex items-center"><div class="w-4 h-4 bg-yellow-100 border-2 border-yellow-400 rounded mr-1"></div>鎖定中</div>
+      <div class="flex items-center"><div class="w-4 h-4 bg-red-100 border-2 border-red-400 rounded mr-1"></div>已售出</div>
+    </div>
+
+    <div id="grid" class="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-3">
+      </div>
+  </div>
+
+  <script type="module">
+    // 導入 Firebase
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js";
+    import { getFirestore, collection, doc, onSnapshot, runTransaction } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCTHXe0izz5FYcKZf3m_WBV2nBnbREgOjA",
+      authDomain: "horse-pot-lock.firebaseapp.com",
+      projectId: "horse-pot-lock",
+      messagingSenderId: "211854672738",
+      appId: "1:211854672738:web:581c17af995d31d4ebe23b"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    
+    // 🔴 這裡設定這個網頁的身份，資料庫會直接認這個名字
+    const STORE_NAME = "總部官網"; 
+    const COLLECTION_NAME = "limited_numbers";
+
+    const gridEl = document.getElementById("grid");
+    let numbers = {};
+
+    // 渲染畫面
+    function render() {
+      gridEl.innerHTML = "";
+      // 排序 1-168
+      const sorted = Object.values(numbers).sort((a, b) => a.number - b.number);
+
+      sorted.forEach(item => {
+        const el = document.createElement("div");
+        // 樣式邏輯
+        let baseClass = "p-2 rounded-xl border-2 flex flex-col justify-between transition-all min-h-[80px]";
+        let statusClass = "bg-white border-slate-200";
+        let btnHtml = "";
+
+        if (item.status === "available") {
+          statusClass = "bg-green-50 border-green-200 hover:border-green-400 shadow-sm cursor-pointer";
+          btnHtml = `<button onclick="window.lock(${item.number})" class="w-full py-1 bg-green-500 text-white rounded font-bold text-xs mt-1">鎖定</button>`;
+        } else if (item.status === "locked") {
+          statusClass = "bg-yellow-50 border-yellow-400 shadow-md transform scale-105 z-10";
+          if (item.lockedBy === STORE_NAME) {
+            btnHtml = `
+              <div class="text-[10px] text-yellow-700 font-bold text-center mb-1">您鎖定了</div>
+              <div class="flex gap-1">
+                <button onclick="window.sell(${item.number})" class="flex-1 py-1 bg-red-600 text-white rounded text-xs font-bold">成交</button>
+                <button onclick="window.unlock(${item.number})" class="flex-1 py-1 bg-gray-400 text-white rounded text-xs font-bold">解除</button>
+              </div>`;
+          } else {
+            btnHtml = `<div class="text-[10px] text-yellow-600 font-bold text-center mt-2">鎖定: ${item.salesName}</div>`;
+          }
+        } else if (item.status === "sold") {
+          statusClass = "bg-red-50 border-red-200 opacity-60";
+          btnHtml = `<div class="text-[10px] text-red-400 font-bold text-center mt-2">售出: ${item.salesName}</div>`;
+        }
+
+        el.className = `${baseClass} ${statusClass}`;
+        el.innerHTML = `
+          <div class="text-xl font-black text-slate-700 text-center">${item.number}</div>
+          <div>${btnHtml}</div>
+        `;
+        gridEl.appendChild(el);
+      });
+    }
+
+    // 監聽資料庫
+    onSnapshot(collection(db, COLLECTION_NAME), (snap) => {
+      snap.forEach(doc => {
+        numbers[doc.id] = doc.data();
+      });
+      render();
+    });
+
+    // 鎖定功能
+    window.lock = async (num) => {
+      try {
+        await runTransaction(db, async (transaction) => {
+          const docRef = doc(db, COLLECTION_NAME, String(num));
+          const sfDoc = await transaction.get(docRef);
+          if (!sfDoc.exists()) throw "Document does not exist!";
+          if (sfDoc.data().status !== "available") throw "被人搶先了！";
+          transaction.update(docRef, {
+            status: "locked",
+            lockedBy: STORE_NAME,
+            salesName: STORE_NAME,
+            timestamp: new Date()
+          });
+        });
+      } catch (e) { alert(e); }
+    };
+
+    // 成交功能
+    window.sell = async (num) => {
+      if(!confirm(`確認編號 ${num} 已完成官網/電話訂單結帳？`)) return;
+      await runTransaction(db, async (transaction) => {
+        const docRef = doc(db, COLLECTION_NAME, String(num));
+        transaction.update(docRef, { status: "sold" });
+      });
+    };
+
+    // 解除功能
+    window.unlock = async (num) => {
+      await runTransaction(db, async (transaction) => {
+        const docRef = doc(db, COLLECTION_NAME, String(num));
+        transaction.update(docRef, {
+          status: "available",
+          lockedBy: null,
+          salesName: null,
+          timestamp: null
+        });
+      });
+    };
+  </script>
+</body>
+</html>
