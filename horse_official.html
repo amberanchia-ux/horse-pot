@@ -20,12 +20,14 @@
     </div>
 
     <div id="grid" class="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-3">
-      </div>
+      <div class="col-span-full text-center text-gray-400 py-8">正在連線至資料庫...</div>
+    </div>
   </div>
 
   <script type="module">
-    // 導入 Firebase
+    // 導入 Firebase 核心與驗證模組 (這次補上了 Auth)
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js";
+    import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
     import { getFirestore, collection, doc, onSnapshot, runTransaction } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -38,8 +40,9 @@
 
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
+    const auth = getAuth(app); // 取得驗證工具
     
-    // 🔴 這裡設定這個網頁的身份，資料庫會直接認這個名字
+    // 🔴 設定本頁面身份
     const STORE_NAME = "總部官網"; 
     const COLLECTION_NAME = "limited_numbers";
 
@@ -48,13 +51,12 @@
 
     // 渲染畫面
     function render() {
+      if (Object.keys(numbers).length === 0) return;
       gridEl.innerHTML = "";
-      // 排序 1-168
       const sorted = Object.values(numbers).sort((a, b) => a.number - b.number);
 
       sorted.forEach(item => {
         const el = document.createElement("div");
-        // 樣式邏輯
         let baseClass = "p-2 rounded-xl border-2 flex flex-col justify-between transition-all min-h-[80px]";
         let statusClass = "bg-white border-slate-200";
         let btnHtml = "";
@@ -64,6 +66,7 @@
           btnHtml = `<button onclick="window.lock(${item.number})" class="w-full py-1 bg-green-500 text-white rounded font-bold text-xs mt-1">鎖定</button>`;
         } else if (item.status === "locked") {
           statusClass = "bg-yellow-50 border-yellow-400 shadow-md transform scale-105 z-10";
+          // 這裡判斷：如果是「總部官網」鎖的，才能顯示操作按鈕
           if (item.lockedBy === STORE_NAME) {
             btnHtml = `
               <div class="text-[10px] text-yellow-700 font-bold text-center mb-1">您鎖定了</div>
@@ -88,12 +91,26 @@
       });
     }
 
-    // 監聽資料庫
-    onSnapshot(collection(db, COLLECTION_NAME), (snap) => {
-      snap.forEach(doc => {
-        numbers[doc.id] = doc.data();
+    // 🚀 關鍵修正：先自動登入，登入成功後再抓資料
+    signInAnonymously(auth).then(() => {
+      console.log("登入成功，開始載入資料...");
+      onAuthStateChanged(auth, (user) => {
+        if (user) {
+          onSnapshot(collection(db, COLLECTION_NAME), (snap) => {
+            if (snap.empty) {
+                gridEl.innerHTML = '<div class="col-span-full text-center">目前無資料</div>';
+                return;
+            }
+            snap.forEach(doc => {
+              numbers[doc.id] = doc.data();
+            });
+            render();
+          });
+        }
       });
-      render();
+    }).catch((error) => {
+      console.error("登入失敗", error);
+      gridEl.innerHTML = `<div class="col-span-full text-center text-red-500">連線失敗: ${error.message}</div>`;
     });
 
     // 鎖定功能
@@ -111,7 +128,7 @@
             timestamp: new Date()
           });
         });
-      } catch (e) { alert(e); }
+      } catch (e) { alert("無法鎖定: " + e); }
     };
 
     // 成交功能
